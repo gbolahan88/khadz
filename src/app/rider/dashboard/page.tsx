@@ -123,33 +123,59 @@ export default function RiderDashboardPage() {
     }
   }
 
-  async function fetchNotifications(userId: string) {
-    const { data } = await supabase
+  const fetchNotifications = useCallback(async (userId: string) => {
+    const { data, error } = await supabase
       .from("notifications")
       .select("*")
       .eq("recipient_role", "rider")
       .eq("rider_id", userId)
       .order("created_at", { ascending: false })
       .limit(20);
-    if (data) setNotifications(data);
-  }
 
-  async function markAllRead(userId: string) {
-    await supabase
+    if (error) {
+      console.log("fetch rider notifications error:", error);
+      return;
+    }
+
+    setNotifications(data || []);
+  }, []);
+
+  const markAllRead = useCallback(async (userId: string) => {
+    const { error } = await supabase
       .from("notifications")
       .update({ read: true })
       .eq("recipient_role", "rider")
       .eq("rider_id", userId)
       .eq("read", false);
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  }
 
-  async function markOneRead(id: string) {
-    await supabase.from("notifications").update({ read: true }).eq("id", id);
+    if (error) {
+      console.log(error);
+      return;
+    }
+
+    await fetchNotifications(userId);
     setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      prev.map((n) => ({ ...n, read: true }))
     );
-  }
+  }, []);
+
+  const markOneRead = useCallback(async (id: string) => {
+    const { error } = await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("id", id);
+
+    if (error) {
+      console.log(error);
+      return;
+    }
+
+    setNotifications((prev) =>
+      prev.map((n) =>
+        n.id === id ? { ...n, read: true } : n
+      )
+    );
+  }, []);
 
   async function updateDeliveryStatus(orderId: string, status: string) {
     try {
@@ -243,31 +269,29 @@ export default function RiderDashboardPage() {
         )
         .subscribe();
 
-      notifChannel = supabase.channel("rider-notifications-" + userId, {
-        config: {
-          broadcast: {self: true},
-        },
-      });
-      notifChannel
+      notifChannel = supabase
+        .channel(`rider-notifications-${userId}`)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "notifications",
-            filter: `rider_id=eq.${userId}`,
+            filter: `recipient_role=eq.rider`,
           },
           (payload) => {
-            console.log("RIDER NOTIFICARION RECEIVED:", payload);
-            if (!mounted) return; 
             const n = payload.new as Notification;
-            setNotifications((prev) => [n, ...prev]);
+
+            // prevent duplicates
+            setNotifications((prev) => {
+              if (prev.some((p) => p.id === n.id)) return prev;
+              return [n, ...prev];
+            });
+
             showToast(n.id, n.title, n.body);
           }
         )
-        .subscribe((status) => {
-          console.log("RIDER REALTIME STATUS:", status);
-        });
+        .subscribe();
     }
 
     init();
@@ -337,7 +361,21 @@ export default function RiderDashboardPage() {
           {/* NOTIFICATION BELL */}
           <div className="relative" ref={notifRef}>
             <button
-              onClick={() => setNotifOpen((prev) => !prev)}
+              onClick={async () => {
+                const next = !notifOpen;
+
+                setNotifOpen(next);
+
+                if (next && unread > 0) {
+                  const {
+                    data: { user },
+                  } = await supabase.auth.getUser();
+
+                  if (user) {
+                    await markAllRead(user.id)
+                  }
+                }
+              }}
               className="relative flex items-center justify-center rounded-lg border border-[#494949] bg-gray-100 p-2"
             >
               <Bell size={16} color="#000" />

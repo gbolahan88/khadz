@@ -56,7 +56,7 @@ function NotifDropdown({
   onNavigate: (orderId: string) => void;
 }) {
   return (
-    <div className="absolute left-0 top-12 z-50 w-80 rounded-2xl border bg-white shadow-xl overflow-hidden">
+    <div className="absolute top-12 z-50 w-80 rounded-2xl border bg-white shadow-xl overflow-hidden right-0 md:right-auto md:left-0">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold text-black">Notifications</h3>
@@ -156,31 +156,54 @@ export default function AdminSidebar() {
   const dismissToast = (id: string) =>
     setToasts((prev) => prev.filter((t) => t.id !== id));
 
-  // ── Fetch notifications ───────────────────────────────────────────────────
-  // ✅ Wrapped in useCallback — fixes "setState in effect" warning
+  //Fetch notifications
   const fetchNotifications = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("notifications")
       .select("*")
       .eq("recipient_role", "admin")
-      .order("created_at", { ascending: false })
-      .limit(20);
-    if (data) setNotifications(data);
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log("fetch error:", error);
+      return;
+    }
+
+    if (data) setNotifications([...data]);
   }, []);
 
   const markAllRead = useCallback(async () => {
-    await supabase
+    const { error } = await supabase
       .from("notifications")
       .update({ read: true })
       .eq("recipient_role", "admin")
       .eq("read", false);
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+
+    if (error) {
+      console.log("markAllRead error:", error);
+      return;
+    }
+
+    setNotifications((prev) =>
+      prev.map((n) => ({ ...n, read: true }))
+    );
   }, []);
 
   const markOneRead = useCallback(async (id: string) => {
-    await supabase.from("notifications").update({ read: true }).eq("id", id);
+    const { error } = await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("id", id);
+
+    if (error) {
+      console.log("markOneRead error:", error);
+      return;
+    }
+
     setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      prev.map((n) =>
+        n.id === id ? { ...n, read: true } : n
+      )
     );
   }, []);
 
@@ -217,7 +240,11 @@ export default function AdminSidebar() {
         (payload) => {
           console.log("ADMIN NOTIFICATION RICIEVED", payload);
           const n = payload.new as Notification;
-          setNotifications((prev) => [n, ...prev]);
+          setNotifications((prev) => {
+            const exists = prev.some((p) => p.id == n.id);
+            if (exists) return prev;
+            return [n, ...prev];
+          });
           showToast(n.id, n.title, n.body);
         }
       )
@@ -278,11 +305,17 @@ export default function AdminSidebar() {
             <Menu size={24} className="text-black" />
           </button>
           <h1 className="text-lg font-bold text-black text-center">Khadz Admin</h1>
+          
           <div className="relative" ref={dropdownRef}>
             <button
-              onClick={() => {
-                setOpen((prev) => !prev);
-                if (!open && unread > 0) markAllRead();
+              onClick={async () => {
+                const next = !open;
+
+                setOpen(next);
+
+                if (next && unread > 0) {
+                  await markAllRead();
+                }
               }}
               className="relative"
             >
@@ -364,9 +397,14 @@ export default function AdminSidebar() {
           <p className="mt-1 text-sm text-gray-500">Management System</p>
           <div className="absolute right-4 top-8" ref={dropdownRef2}>
             <button
-              onClick={() => {
-                setOpen((prev) => !prev);
-                if (!open && unread > 0) markAllRead();
+              onClick={async () => {
+                const next = !open;
+
+                setOpen(next);
+
+                if (next && unread > 0) {
+                  await markAllRead();
+                }
               }}
               className="relative"
             >
