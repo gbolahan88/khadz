@@ -2,26 +2,12 @@
 
 import AdminSidebar from "@/components/admin-sidebar";
 import { supabase } from "@/lib/supabase";
+import { Package, ShoppingBag, TrendingUp, Clock3, Bike, ChevronRight } from "lucide-react";
 import {
-  Package,
-  ShoppingBag,
-  TrendingUp,
-  Clock3,
-  Bike,
-  ChevronRight,
-} from "lucide-react";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  BarChart,
-  Bar,
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis,
+  Tooltip, CartesianGrid, BarChart, Bar,
 } from "recharts";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getUserRole } from "@/lib/get-user-role";
 
@@ -37,116 +23,83 @@ type Order = {
 
 export default function DashboardPage() {
   const router = useRouter();
-
   const [loading, setLoading] = useState(true);
   const [totalOrders, setTotalOrders] = useState(0);
   const [totalProducts, setTotalProducts] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
   const [revenue, setRevenue] = useState(0);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
-  const [chartData, setChartData] = useState<{
-    date: string;
-    revenue: number;
-    orders: number;
-  }[]>([]);
+  const [chartData, setChartData] = useState<{ date: string; revenue: number; orders: number }[]>([]);
+  const hasFetched = useRef(false);
 
-  const fetchDashboardData = useCallback(async () => {
+  async function fetchDashboardData() {
     try {
       setLoading(true);
 
-      // Fetch orders with rider info joined
-      const { data: orders, error: ordersError } = await supabase
-        .from("orders")
-        .select("*, riders(full_name)")
-        .order("created_at", { ascending: true });
+      const [{ data: orders, error: ordersError }, { data: products, error: productsError }] =
+        await Promise.all([
+          supabase.from("orders").select("*").order("created_at", { ascending: true }),
+          supabase.from("products").select("id"),
+        ]);
 
-      if (ordersError) throw ordersError;
+      if (ordersError) { console.error("Orders error:", ordersError); }
+      if (productsError) { console.error("Products error:", productsError); }
 
-      const { data: products, error: productsError } = await supabase
-        .from("products")
-        .select("*");
+      const orderList = orders || [];
+      const productList = products || [];
 
-      if (productsError) throw productsError;
+      setTotalOrders(orderList.length);
+      setTotalProducts(productList.length);
+      setPendingOrders(orderList.filter((o) => o.order_status?.toLowerCase() === "preparing").length);
+      setRevenue(orderList.reduce((sum, o) => sum + Number(o.total_amount || 0), 0));
 
-      setTotalOrders(orders?.length || 0);
-      setTotalProducts(products?.length || 0);
-
-      const pending = orders?.filter(
-        (o) => o.order_status?.toLowerCase() === "preparing"
-      ).length || 0;
-      setPendingOrders(pending);
-
-      const totalRevenue = orders?.reduce(
-        (sum, o) => sum + Number(o.total_amount || 0), 0
-      ) || 0;
-      setRevenue(totalRevenue);
-
-      // Recent orders — last 10, newest first
-      const sorted = [...(orders || [])].sort(
+      const sorted = [...orderList].sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       setRecentOrders(sorted.slice(0, 10));
 
-      // Chart data
       const grouped: Record<string, { revenue: number; orders: number }> = {};
-      orders?.forEach((order) => {
-        const date = new Date(order.created_at || "").toLocaleDateString();
+      orderList.forEach((o) => {
+        const date = new Date(o.created_at).toLocaleDateString();
         if (!grouped[date]) grouped[date] = { revenue: 0, orders: 0 };
-        grouped[date].revenue += Number(order.total_amount || 0);
+        grouped[date].revenue += Number(o.total_amount || 0);
         grouped[date].orders += 1;
       });
-
-      setChartData(
-        Object.entries(grouped).map(([date, values]) => ({
-          date,
-          revenue: values.revenue,
-          orders: values.orders,
-        }))
-      );
-    } catch (error) {
-      console.log("Dashboard data fetch error:", error);
+      setChartData(Object.entries(grouped).map(([date, v]) => ({ date, ...v })));
+    } catch (err) {
+      console.error("Dashboard fetch error:", err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }
 
   useEffect(() => {
-    async function checkAccess() {
+    if (hasFetched.current) return;
+    hasFetched.current = true;
+
+    async function init() {
       const role = await getUserRole();
       if (role !== "admin" && role !== "super_admin") {
         router.push("/rider/dashboard");
+        return;
       }
+      await fetchDashboardData();
     }
 
-    (async () => {
-      await checkAccess();
-      await fetchDashboardData();
-    })();
+    init();
 
-    // ✅ Realtime — auto-refresh dashboard when new orders arrive
+    // Realtime auto-refresh
     const channel = supabase
-      .channel("dashboard-orders")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders" },
-        () => {
-          // Refetch all dashboard data when any order changes
-          fetchDashboardData();
-        }
-      )
+      .channel("dashboard-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+        fetchDashboardData();
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [fetchDashboardData]);
+  }, []);
 
-  const cards = [
-    { title: "Total Orders", value: totalOrders, icon: ShoppingBag, color: "red" },
-    { title: "Products", value: totalProducts, icon: Package, color: "blue" },
-    { title: "Pending Orders", value: pendingOrders, icon: Clock3, color: "orange" },
-    { title: "Revenue", value: `₦${revenue.toLocaleString()}`, icon: TrendingUp, color: "green" },
-  ];
-
-  const getStatusColor = (status: string) => {
+  const getStatusStyle = (status: string) => {
     switch (status?.toLowerCase()) {
       case "preparing": return { bg: "#fff3e0", text: "#f57c00" };
       case "on the way": return { bg: "#e3f2fd", text: "#1976d2" };
@@ -155,6 +108,13 @@ export default function DashboardPage() {
       default: return { bg: "#f5f5f5", text: "#666" };
     }
   };
+
+  const cards = [
+    { title: "Total Orders", value: totalOrders, icon: ShoppingBag, color: "red" },
+    { title: "Products", value: totalProducts, icon: Package, color: "blue" },
+    { title: "Pending Orders", value: pendingOrders, icon: Clock3, color: "orange" },
+    { title: "Revenue", value: `₦${revenue.toLocaleString()}`, icon: TrendingUp, color: "green" },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-100 md:flex" style={{ fontFamily: "'DM Sans', sans-serif" }}>
@@ -176,7 +136,6 @@ export default function DashboardPage() {
             <h1 className="text-2xl md:text-3xl font-bold text-black">Dashboard</h1>
             <p className="mt-1 text-gray-500">Monitor orders, revenue, and products.</p>
           </div>
-          {/* Live indicator */}
           <div className="flex items-center gap-2 rounded-full bg-green-50 px-3 py-1.5 border border-green-200">
             <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
             <span className="text-xs font-semibold text-green-700">Live</span>
@@ -211,7 +170,7 @@ export default function DashboardPage() {
 
             {/* CHARTS */}
             <div className="mt-8 grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl text-black bg-white p-6 shadow-sm">
+              <div className="rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="mb-6 text-xl font-semibold text-black">Revenue Analytics</h2>
                 <ResponsiveContainer width="100%" height={400}>
                   <LineChart data={chartData}>
@@ -223,8 +182,7 @@ export default function DashboardPage() {
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-
-              <div className="rounded-2xl text-black bg-white p-6 shadow-sm">
+              <div className="rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="mb-6 text-xl font-semibold text-black">Orders Analytics</h2>
                 <ResponsiveContainer width="100%" height={400}>
                   <BarChart data={chartData}>
@@ -238,13 +196,13 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* RECENT ACTIVITY */}
+            {/* RECENT ORDERS */}
             <div className="mt-8 rounded-2xl bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-semibold text-black">Recent Orders</h2>
                 <button
                   onClick={() => router.push("/admin/orders")}
-                  className="text-sm font-semibold text-orange-500 hover:opacity-70 flex items-center gap-1"
+                  className="flex items-center gap-1 text-sm font-semibold text-orange-500 hover:opacity-70"
                   style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}
                 >
                   View all <ChevronRight size={16} />
@@ -252,7 +210,7 @@ export default function DashboardPage() {
               </div>
 
               {recentOrders.length === 0 ? (
-                <div className="rounded-xl border p-4 text-center text-gray-400">
+                <div className="rounded-xl border p-6 text-center text-gray-400">
                   <p className="text-sm">No orders yet</p>
                 </div>
               ) : (
@@ -270,24 +228,18 @@ export default function DashboardPage() {
                     </thead>
                     <tbody>
                       {recentOrders.map((order) => {
-                        const statusStyle = getStatusColor(order.order_status);
+                        const s = getStatusStyle(order.order_status);
                         return (
                           <tr
                             key={order.id}
                             className="order-row border-b last:border-0"
                             onClick={() => router.push(`/admin/orders/${order.id}`)}
                           >
-                            <td className="py-3 pr-4">
-                              <span
-                                className="font-mono text-xs font-semibold text-black"
-                              >
-                                #{order.id.slice(0, 8).toUpperCase()}
-                              </span>
+                            <td className="py-3 pr-4 font-mono text-xs font-semibold text-black">
+                              #{order.id.slice(0, 8).toUpperCase()}
                             </td>
-                            <td className="py-3 pr-4">
-                              <span className="font-medium text-black">
-                                {order.customer_name || "—"}
-                              </span>
+                            <td className="py-3 pr-4 font-medium text-black">
+                              {order.customer_name || "—"}
                             </td>
                             <td className="py-3 pr-4">
                               {order.riders?.full_name ? (
@@ -296,7 +248,7 @@ export default function DashboardPage() {
                                   {order.riders.full_name}
                                 </span>
                               ) : (
-                                <span className="text-gray-400 text-xs">Not assigned</span>
+                                <span className="text-xs text-gray-400">Not assigned</span>
                               )}
                             </td>
                             <td className="py-3 pr-4 font-semibold text-black">
@@ -305,7 +257,7 @@ export default function DashboardPage() {
                             <td className="py-3 pr-4">
                               <span
                                 className="rounded-full px-2.5 py-1 text-xs font-semibold"
-                                style={{ background: statusStyle.bg, color: statusStyle.text }}
+                                style={{ background: s.bg, color: s.text }}
                               >
                                 {order.order_status}
                               </span>
