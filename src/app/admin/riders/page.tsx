@@ -2,7 +2,7 @@
 
 import AdminSidebar from "@/components/admin-sidebar";
 import { supabase } from "@/lib/supabase";
-import { Bike, Plus, User } from "lucide-react";
+import { Bike, Plus, Trash2, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast, Toaster } from "sonner";
 
@@ -81,6 +81,29 @@ export default function RidersPage() {
       console.log(error);
 
       toast.error("Failed to add rider");
+    }
+  }
+
+  async function deleteRider(riderId: string) {
+    try {
+      if (!confirm("Are you sure you want to remove this rider?")) {
+        return;
+      }
+
+      const res = await fetch("/api/delete-rider", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ riderId }),
+      });
+
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error);
+
+      toast.success("Rider removed successfully");
+      fetchRiders();
+    } catch (error) {
+      console.log(error);
+      toast.error("Failed to remove rider");
     }
   }
 
@@ -252,7 +275,7 @@ export default function RidersPage() {
                   </p>
                 </div>
 
-                <div className="mt-6 flex gap-2">
+                <div className="mt-6 grid grid-cols-2 gap-2">
                   <button
                     onClick={() =>
                       updateRiderStatus(
@@ -260,7 +283,7 @@ export default function RidersPage() {
                         "available"
                       )
                     }
-                    className="rounded-xl bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                    className="rounded-xl bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-black transition-colors"
                   >
                     Available
                   </button>
@@ -272,7 +295,7 @@ export default function RidersPage() {
                         "busy"
                       )
                     }
-                    className="rounded-xl bg-yellow-500 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                    className="rounded-xl bg-yellow-500 px-4 py-2 text-sm font-semibold text-white hover:bg-black transition-colors"
                   >
                     Busy
                   </button>
@@ -284,9 +307,17 @@ export default function RidersPage() {
                         "offline"
                       )
                     }
-                    className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                    className="rounded-xl bg-gray-600 px-4 py-2 text-sm font-semibold text-white hover:bg-black transition-colors"
                   >
                     Offline
+                  </button>
+
+                  <button
+                    onClick={() => deleteRider(rider.id)}
+                    className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-black transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Trash2 size={16} />
+                    Remove
                   </button>
                 </div>
               </div>

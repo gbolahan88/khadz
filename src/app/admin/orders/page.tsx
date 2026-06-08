@@ -17,6 +17,7 @@ type OrderItem = {
 type Order = {
   id: string;
   total_amount: number;
+  delivery_fee?: number;
   payment_status: string;
   payment_method: string;
   order_status: string;
@@ -32,6 +33,7 @@ export default function OrdersPage() {
   const [updatingId, setUpdatingId] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [printSize, setPrintSize] = useState<"80mm" | "a4">("80mm");
   const [currentPage, setCurrentPage] = useState(1);
 
   const ORDERS_PER_PAGE = 5;
@@ -114,6 +116,79 @@ export default function OrdersPage() {
     }
   }
 
+  function printOrder(order: Order, size: "80mm" | "a4") {
+    const itemsRows = order.items
+      .map(
+        (item) =>
+          `<tr><td>${item.name}</td><td>${item.quantity}</td><td>₦${Number(
+            item.price
+          ).toLocaleString()}</td></tr>`
+      )
+      .join("");
+
+    const pageSize = size === "a4" ? "A4 portrait" : "80mm auto";
+    const bodyWidth = size === "a4" ? "190mm" : "76mm";
+    const padding = size === "a4" ? "16px" : "8px";
+
+    const html = `<!doctype html>
+<html>
+<head>
+  <title>Order ${order.id}</title>
+  <style>
+    @page { size: ${pageSize}; margin: 8mm; }
+    body {
+      font-family: system-ui, sans-serif;
+      padding: ${padding};
+      color: #000;
+      width: ${bodyWidth};
+      margin: 0 auto;
+      box-sizing: border-box;
+    }
+    h1, h2, p, td { margin: 0; }
+    h1 { font-size: 18px; margin-bottom: 8px; }
+    h2 { font-size: 14px; margin-top: 16px; }
+    .meta { margin-bottom: 12px; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    td { padding: 4px 0; border-bottom: 1px solid #ddd; font-size: 12px; }
+    .label { font-weight: 700; }
+    .summary { margin-top: 12px; font-size: 12px; }
+    .summary-row { display: flex; justify-content: space-between; font-size: 12px; }
+    .title { font-size: 16px; margin-bottom: 8px; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1 class="title">Khadz&T's RoofTop</h1>
+  <p style="text-align: center; color: gray;">Ibikunle Estate, Osogbo, Osun State.</p>
+  <h1>Order Receipt</h1>
+  <div class="meta">
+    <p><span class="label">Order ID:</span> ${order.id}</p>
+    <p><span class="label">Customer:</span> ${order.customer_name || "N/A"}</p>
+  </div>
+  <h2>Items</h2>
+  <table>
+    ${itemsRows}
+  </table>
+  <div class="summary">
+    <div class="summary-row"><span class="label">Delivery Fee</span><span>₦${Number(
+      order.delivery_fee || 0
+    ).toLocaleString()}</span></div>
+    <div class="summary-row"><span class="label">Total Amount</span><span>₦${Number(
+      order.total_amount
+    ).toLocaleString()}</span></div>
+  </div>
+</body>
+</html>`;
+
+    const printWindow = window.open("", "_blank", "width=1000,height=640");
+    if (!printWindow) return;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
+  }
+
   const filteredOrders = orders.filter((order) => {
     const matchesSearch = order.id.toLowerCase().includes(search.toLowerCase());
     const matchesStatus =
@@ -152,18 +227,34 @@ export default function OrdersPage() {
             className="w-full rounded-xl border text-black border-gray-300 bg-white px-4 py-3 outline-none focus:border-black md:max-w-sm"
           />
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-xl text-black border border-gray-300 bg-white px-4 py-3 outline-none focus:border-black"
-          >
-            <option value="all">All Orders</option>
-            <option value="pending">Pending</option>
-            <option value="preparing">Preparing</option>
-            <option value="on the way">On The Way</option>
-            <option value="delivered">Delivered</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-xl text-black border border-gray-300 bg-white px-4 py-3 outline-none focus:border-black"
+            >
+              <option value="all">All Orders</option>
+              <option value="pending">Pending</option>
+              <option value="preparing">Preparing</option>
+              <option value="on the way">On The Way</option>
+              <option value="delivered">Delivered</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+
+            <div className="rounded-xl border border-gray-300 bg-white px-4 py-3">
+              <label className="block text-sm font-semibold text-gray-700">
+                Print size
+              </label>
+              <select
+                value={printSize}
+                onChange={(e) => setPrintSize(e.target.value as "80mm" | "a4")}
+                className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black"
+              >
+                <option value="80mm">80mm</option>
+                <option value="a4">A4</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         {loading ? (
@@ -307,6 +398,15 @@ export default function OrdersPage() {
                         className="rounded-xl bg-red-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
                       >
                         Cancel Order
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          printOrder(order, printSize);
+                        }}
+                        className="rounded-xl bg-gray-800 px-5 py-3 text-sm font-semibold text-white"
+                      >
+                        Print
                       </button>
                     </div>
                   </div>
